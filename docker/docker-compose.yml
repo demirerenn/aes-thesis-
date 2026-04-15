@@ -16,7 +16,7 @@ services:
       context: ..
       dockerfile: docker/Dockerfile
       args:
-        NGC_TAG: 25.02-py3
+        NGC_TAG: 25.12-py3
     image: aes-thesis-trainer:latest
     # NVIDIA runtime (Docker Engine 19.03+ with nvidia-container-toolkit)
     deploy:
