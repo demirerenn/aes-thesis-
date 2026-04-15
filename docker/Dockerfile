@@ -10,7 +10,7 @@
 #     container, not by requirements-lock alone.
 #   * Same image runs on GX10 dev box and any NGC-compatible cloud GPU.
 # ------------------------------------------------------------------
-ARG NGC_TAG=25.02-py3
+ARG NGC_TAG=25.12-py3
 FROM nvcr.io/nvidia/pytorch:${NGC_TAG}
 
 LABEL org.opencontainers.image.title="aes-thesis-trainer"
