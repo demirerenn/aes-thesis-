@@ -30,7 +30,7 @@ coral-pytorch==1.4.0
 
 # ---- Experiment tracking ----
 mlflow==2.20.1
-weights-and-biases==0.19.4  # opsiyonel; MLflow birincil
+wandb==0.19.4  # opsiyonel; MLflow birincil
 
 # ---- Data + stats ----
 numpy==1.26.4
@@ -51,11 +51,12 @@ langchain-anthropic==0.3.3
 langchain-openai==0.3.3
 langchain-google-genai==2.0.9
 
-# ---- Config + CLI ----
+# ---- Config + CLI + Templating ----
 pyyaml==6.0.2
 typer==0.15.1
 rich==13.9.4
 python-dotenv==1.0.1
+jinja2==3.1.5
 
 # ---- Reproducibility helpers ----
 pip-tools==7.4.1
