@@ -167,17 +167,43 @@ def main() -> int:
                 for k, v in dev_metrics.items():
                     mlflow.log_metric(f"dev.{k}", float(v))
                 if te_df is not None:
-                    test_metrics = trainer.evaluate_df(te_df)
+                    test_metrics, y_true, y_pred = trainer.evaluate_df(te_df, return_predictions=True)
                     for k, v in test_metrics.items():
                         mlflow.log_metric(f"test.{k}", float(v))
                     dev_metrics["test_qwk"] = float(test_metrics["qwk"])
                     dev_metrics["test_mae"] = float(test_metrics.get("mae", 0.0))
+                    # Persist predictions for Evaluator error analysis
+                    pred_path = output_dir / f"preds-{tag}.csv"
+                    import pandas as pd
+                    preds_df = pd.DataFrame({
+                        "essay_id": te_df.get("essay_id", pd.Series(range(len(te_df)))).values,
+                        "essay_set": te_df.get("essay_set", pd.Series([0]*len(te_df))).values,
+                        "y_true": y_true,
+                        "y_pred": y_pred,
+                        "abs_err": np.abs(y_true - y_pred),
+                        "essay_len_words": te_df["essay"].str.split().str.len().values,
+                    })
+                    preds_df.to_csv(pred_path, index=False)
+                    mlflow.log_artifact(str(pred_path))
         else:
             dev_metrics = trainer.fit(tr_df, va_df)
             if te_df is not None:
-                test_metrics = trainer.evaluate_df(te_df)
+                test_metrics, y_true, y_pred = trainer.evaluate_df(te_df, return_predictions=True)
                 dev_metrics["test_qwk"] = float(test_metrics["qwk"])
                 dev_metrics["test_mae"] = float(test_metrics.get("mae", 0.0))
+                # Dump per-sample predictions for Evaluator Agent error analysis
+                pred_path = output_dir / f"preds-{tag}.csv"
+                import pandas as pd
+                preds_df = pd.DataFrame({
+                    "essay_id": te_df.get("essay_id", pd.Series(range(len(te_df)))).values,
+                    "essay_set": te_df.get("essay_set", pd.Series([0]*len(te_df))).values,
+                    "y_true": y_true,
+                    "y_pred": y_pred,
+                    "abs_err": np.abs(y_true - y_pred),
+                    "essay_len_words": te_df["essay"].str.split().str.len().values,
+                })
+                preds_df.to_csv(pred_path, index=False)
+                print(f"  → saved {pred_path}")
 
         ckpt_path = output_dir / f"ckpt-{tag}.pt"
         trainer.save_checkpoint(ckpt_path)

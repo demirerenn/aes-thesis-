@@ -241,7 +241,14 @@ class Trainer:
         return self.evaluate(val_loader)
 
     @torch.no_grad()
-    def evaluate(self, loader: DataLoader) -> dict[str, float]:
+    def evaluate(self, loader: DataLoader,
+                 return_predictions: bool = False) -> dict[str, float] | tuple[dict[str, float], np.ndarray, np.ndarray]:
+        """Run evaluation loop.
+
+        If ``return_predictions`` is True, additionally return
+        (y_true, y_pred) numpy arrays so the Evaluator Agent can build a
+        confusion matrix and worst-prediction list.
+        """
         self.model.eval()
         preds, gts = [], []
         for batch in loader:
@@ -255,12 +262,18 @@ class Trainer:
             preds.append(yhat); gts.append(y)
         yhat = np.concatenate(preds)
         y = np.concatenate(gts)
-        return all_metrics(y, yhat, labels=list(range(self.cfg.num_classes)))
+        metrics = all_metrics(y, yhat, labels=list(range(self.cfg.num_classes)))
+        if return_predictions:
+            return metrics, y, yhat
+        return metrics
 
-    def evaluate_df(self, df) -> dict[str, float]:
-        """Convenience wrapper: build loader from DataFrame and evaluate."""
+    def evaluate_df(self, df, return_predictions: bool = False):
+        """Convenience wrapper: build loader from DataFrame and evaluate.
+
+        When ``return_predictions`` is True, returns (metrics, y_true, y_pred).
+        """
         loader = self._make_loader(df, shuffle=False)
-        return self.evaluate(loader)
+        return self.evaluate(loader, return_predictions=return_predictions)
 
     def save_checkpoint(self, path: str | Path) -> None:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
