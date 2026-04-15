@@ -1,0 +1,141 @@
+{# ------------------------------------------------------------------
+   Evaluator Agent → Deney Raporu (run_report.md.j2)
+   Derived from Report_Template_v1.md (peer-review talep 13c-3 onaylı)
+   Consumed variables:
+     run_name, mode, generated_at, env, data_hashes, config,
+     qwk_mean, qwk_std, qwk_min, qwk_max, qwk_ci_lo, qwk_ci_hi,
+     n_observations, fold_records, secondary_metrics,
+     confusion_matrix, worst_predictions, length_bucket_mae,
+     comparison, decision, rationale, next_agent, artifacts
+------------------------------------------------------------------ #}
+# Deney Raporu — `{{ run_name }}`
+
+*Evaluator Agent tarafından üretilmiştir. Onay zinciri: Evaluator → Feedback Strategist → Thesis Writer.*
+
+---
+
+## 0. Meta-Bilgi
+
+| Alan | Değer |
+|------|-------|
+| Run name | `{{ run_name }}` |
+| Değerlendirme modu | `{{ mode }}` |
+| MLflow Run ID | `{{ mlflow_run_id or "—" }}` |
+| Tarih | {{ generated_at }} |
+| Donanım | {{ env.get("hw", "ASUS Ascent GX10 / NVIDIA GB10 (128 GB unified)") }} |
+| GPU | {{ env.get("gpu_name", "—") }} |
+| torch / CUDA | {{ env.get("torch_version", "—") }} / {{ env.get("cuda_version", "—") }} |
+| Image digest | {{ env.get("docker_image_digest", "—") }} |
+| Git commit | {{ env.get("git_commit", "—") }} |
+| Rapor sürümü | `rev{{ rev | default(0) }}` |
+
+## 1. Konfigürasyon Özeti
+
+- **Dataset:** {{ config.dataset.name }} — prompt filtresi: `{{ config.dataset.get("prompts", "all") }}`
+- **N (train / dev / test):** {{ n_train }} / {{ n_dev }} / {{ n_test or "—" }}
+- **Backbone:** `{{ config.model.backbone }}`
+- **Loss:** `{{ config.model.loss }}` — num_classes: {{ config.model.num_classes }}
+- **max_seq_len:** {{ config.training.max_length }} — batch: {{ config.training.batch_size }} (grad_accum {{ config.training.grad_accum }}, efektif {{ config.training.batch_size * config.training.grad_accum }})
+- **LR / warmup / weight_decay:** {{ config.training.lr }} / {{ config.training.warmup_ratio }} / {{ config.training.weight_decay }}
+- **Epoch:** {{ config.training.epochs }} — early-stop patience: {{ config.training.early_stop_patience }}
+- **Precision:** {{ config.training.precision | upper }} — torch.compile: {{ config.training.compile_backbone }} — Flash-Attn: {{ env.get("flash_attn_version", "—") }}
+- **Seed'ler:** {{ seeds | join(", ") }}
+- **Veri hash'leri:** {% for k, v in data_hashes.items() %}`{{ k }}={{ v[:16] }}…` {% endfor %}
+
+## 2. Birincil Sonuçlar
+
+### 2.1 QWK (birincil metrik)
+
+| Seed | {% if mode == "cv" %}Fold{% else %}Dev QWK{% endif %} | {% if has_test %}Test QWK{% endif %} | MAE | RMSE |
+|------|-------------------------------------------------------|--------------------------------------|-----|------|
+{% for r in fold_records -%}
+| {{ r.seed }} | {% if mode == "cv" %}f{{ r.fold }} — {{ "%.4f"|format(r.qwk) }}{% else %}{{ "%.4f"|format(r.qwk) }}{% endif %} | {% if has_test %}{{ "%.4f"|format(r.get("test_qwk", 0)) }}{% endif %} | {{ "%.3f"|format(r.mae) }} | {{ "%.3f"|format(r.rmse) }} |
+{% endfor %}
+
+**QWK(dev) = {{ "%.4f"|format(qwk_mean) }}** {% if n_observations >= 5 %}[%95 bootstrap CI, n_iter=1000, fold-seviyesi resample]: [{{ "%.4f"|format(qwk_ci_lo) }}, {{ "%.4f"|format(qwk_ci_hi) }}]{% else %}(pilot: mean ± std = {{ "%.4f"|format(qwk_mean) }} ± {{ "%.4f"|format(qwk_std) }}, min={{ "%.4f"|format(qwk_min) }}, max={{ "%.4f"|format(qwk_max) }}){% endif %}
+
+### 2.2 İkincil Metrikler (ortalama ± std)
+
+| Metrik | Değer | Hedef | Durum |
+|--------|-------|-------|-------|
+{% for m in secondary_metrics -%}
+| {{ m.name }} | {{ "%.4f"|format(m.value) }} ± {{ "%.4f"|format(m.std) }} | {{ m.target or "—" }} | {{ m.status }} |
+{% endfor %}
+
+## 3. Confusion Matrix (Aggregate)
+
+*{{ n_observations }} değerlendirmenin birleşimi.*
+
+```
+{{ confusion_matrix_render }}
+```
+
+**Diagonal dominance:** {{ "%.1f"|format(diagonal_pct) }}% · **En sık hata çifti:** {{ top_error_pair or "—" }}
+
+## 4. Hata Analizi
+
+### 4.1 En Kötü 20 Tahmin (|tahmin − gerçek| sırasıyla)
+
+| # | Gerçek | Tahmin | Δ | Uzunluk (kelime) | essay_set | essay_id |
+|---|--------|--------|---|------------------|-----------|----------|
+{% for w in worst_predictions[:20] -%}
+| {{ loop.index }} | {{ w.y_true }} | {{ w.y_pred }} | {{ w.abs_err }} | {{ w.essay_len_words }} | {{ w.essay_set }} | {{ w.essay_id }} |
+{% endfor %}
+
+### 4.2 Uzunluk Bazında Hata
+
+| Uzunluk Kovası | N | MAE | QWK |
+|----------------|---|-----|-----|
+{% for b in length_bucket_mae -%}
+| {{ b.bucket }} | {{ b.n }} | {{ "%.3f"|format(b.mae) }} | {{ "%.4f"|format(b.qwk) }} |
+{% endfor %}
+
+## 5. ASAP 2.0 — Fairness Alt-Raporu
+
+{% if fairness %}
+| Demografik Grup | N | QWK | Δ (genel ort.) | Sinyal Bias |
+|-----------------|---|-----|----------------|-------------|
+{% for g in fairness.groups -%}
+| {{ g.group }} | {{ g.n }} | {{ "%.4f"|format(g.qwk) }} | {{ "%+.3f"|format(g.delta) }} | {{ "%+.3f"|format(g.bias) }} |
+{% endfor %}
+
+**Maksimum grup-arası QWK farkı:** {{ "%.3f"|format(fairness.max_gap) }} — Eşik 0.10: {{ "GEÇTİ" if fairness.max_gap <= 0.10 else "GEÇMEDİ" }}
+{% else %}
+N/A — ASAP 2.0 çalıştırması değil.
+{% endif %}
+
+## 6. Kaynak Tüketimi
+
+- **Toplam wall-clock:** {{ resources.wall_clock or "—" }}
+- **Zirve GPU belleği:** {{ resources.peak_gpu_mem_gb or "—" }} GB / 128 GB
+- **Ortalama saniye/adım:** {{ resources.avg_step_sec or "—" }}
+
+## 7. Karşılaştırma
+
+| Referans | QWK | Kaynak |
+|----------|-----|--------|
+{% for c in comparison -%}
+| {{ c.name }} | {{ c.qwk }} | {{ c.source }} |
+{% endfor %}
+
+## 8. Karar Önerisi (Stop / Go)
+
+**Karar:** {{ decision | upper }}
+
+{% for opt in decision_options -%}
+- [{{ "x" if opt.key == decision else " " }}] **{{ opt.label }}** — {{ opt.desc }}
+{% endfor %}
+
+**Gerekçe:** {{ rationale }}
+
+**Sorumlu bir sonraki Agent:** {{ next_agent }}
+
+## 9. Ekler
+
+{% for a in artifacts -%}
+- `{{ a }}`
+{% endfor %}
+
+---
+
+*Generated by Evaluator Agent · {{ generated_at }} · template run_report.md.j2 v1*
