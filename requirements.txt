@@ -1,0 +1,61 @@
+# =============================================================
+# Agent System — Automated Essay Scoring
+# Thesis project, ADR-001-rev1 (Training Engineer delivery)
+#
+# Target hardware:  ASUS Ascent GX10 (NVIDIA GB10, CUDA 12.6+)
+# Python:           3.11 (recommended) or 3.12
+# PyTorch build:    cu126+ for GB10 Blackwell native BF16
+#
+# NOTE: Exact lock file (requirements-lock.txt) must be produced
+# by `uv pip compile` or `pip-compile` on the GX10 target before
+# first training run (peer-review talebi 13c-1).
+# =============================================================
+
+# ---- Deep learning core ----
+torch==2.5.1
+torchvision==0.20.1
+transformers==4.48.3
+tokenizers==0.21.0
+accelerate==1.3.0
+safetensors==0.5.2
+sentencepiece==0.2.0
+datasets==3.2.0
+huggingface-hub==0.27.1
+
+# ---- Flash-Attention 2 (required for Longformer long-seq) ----
+flash-attn==2.6.3
+
+# ---- Ordinal regression losses (CORN, CORAL) ----
+coral-pytorch==1.4.0
+
+# ---- Experiment tracking ----
+mlflow==2.20.1
+weights-and-biases==0.19.4  # opsiyonel; MLflow birincil
+
+# ---- Data + stats ----
+numpy==1.26.4
+pandas==2.2.3
+scikit-learn==1.6.1
+scipy==1.15.1
+ftfy==6.3.1
+beautifulsoup4==4.12.3
+
+# ---- Metrics / viz ----
+matplotlib==3.10.0
+seaborn==0.13.2
+
+# ---- Agent orchestration ----
+langgraph==0.2.69
+langchain==0.3.15
+langchain-anthropic==0.3.3
+langchain-openai==0.3.3
+langchain-google-genai==2.0.9
+
+# ---- Config + CLI ----
+pyyaml==6.0.2
+typer==0.15.1
+rich==13.9.4
+python-dotenv==1.0.1
+
+# ---- Reproducibility helpers ----
+pip-tools==7.4.1

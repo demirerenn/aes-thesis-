@@ -1,0 +1,29 @@
+# Keep the Docker build context small.
+.git
+.venv
+venv
+__pycache__
+*.pyc
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+# Experiment outputs — mounted as volume, never baked in
+mlruns/
+runs/
+wandb/
+.cache/
+.huggingface/
+
+# Secrets
+.env
+.env.local
+
+# Docs that aren't needed at runtime (still in git)
+*.docx
+eda_reports/
+
+# Editor
+.vscode
+.idea
+.DS_Store

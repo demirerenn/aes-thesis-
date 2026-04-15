@@ -1,0 +1,55 @@
+# Baseline configuration — ADR-001-rev2 §5 "Pilot Phase" (Fixed-split × 3 seeds)
+# Gating: pilot QWK ≥ 0.82 → full CV on best config
+#         0.78–0.82       → 1–2 hyperparam ablation + CV
+#         < 0.78          → architecture revision before CV
+# Run: asap1-p2-deberta_v3_lg-corn-pilot-s42_123_2024-rev0
+
+run_name:  asap1-p2-deberta_v3_lg-corn-pilot-rev0
+
+dataset:
+  name:       asap1
+  path:       data/training_set_rel3.tsv
+  prompts:    [2]
+
+model:
+  backbone:   microsoft/deberta-v3-large
+  loss:       corn
+  num_classes: 6              # ASAP1 Prompt 2: scores 1..6
+  dropout:    0.1
+
+training:
+  max_length:  768
+  batch_size:  16
+  grad_accum:  2               # effective batch = 32
+  lr:          1.0e-5
+  epochs:      4
+  warmup_ratio: 0.1
+  weight_decay: 0.01
+  precision:   bf16
+  compile_backbone: true
+  longformer_global: false
+  early_stop_patience: 2
+  grad_clip:   1.0
+  num_workers: 4
+
+# Pilot Phase: fixed stratified 70/15/15 split, 3 training seeds.
+# The split itself is fixed (split_seed) across all training seeds so
+# that variance is attributable only to optimization, not to data.
+eval:
+  mode:        pilot            # pilot | cv
+  split_seed:  42                # controls train/dev/test partition
+  split_ratios: [0.70, 0.15, 0.15]
+  seeds:       [42, 123, 2024]   # training seeds — multi-seed QWK aggregation
+
+# Retained for Phase 2 (full CV). Ignored when eval.mode == "pilot".
+cv:
+  n_splits:  5
+  seeds:     [42, 123, 2024]
+
+tracking:
+  mlflow_uri:     file:./mlruns
+  experiment:     aes-thesis
+  log_artifacts:  true
+
+output:
+  dir:        runs/asap1-p2-deberta_v3_lg-corn-pilot-rev0

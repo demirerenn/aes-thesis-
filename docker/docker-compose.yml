@@ -1,0 +1,68 @@
+# ------------------------------------------------------------------
+# docker-compose for GX10 development.
+# Two services:
+#   * trainer  — one-shot training/evaluation runs
+#   * mlflow   — persistent MLflow UI (http://localhost:5000)
+#
+# Usage:
+#   docker compose build trainer
+#   docker compose run --rm trainer python -m src.scripts.train_baseline \
+#       --config configs/baseline_asap1_p2.yaml --mode pilot
+#   docker compose up -d mlflow
+# ------------------------------------------------------------------
+services:
+  trainer:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        NGC_TAG: 25.02-py3
+    image: aes-thesis-trainer:latest
+    # NVIDIA runtime (Docker Engine 19.03+ with nvidia-container-toolkit)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    # For older docker-compose syntax or Compose v1:
+    # runtime: nvidia
+    shm_size: "16gb"   # tokenizer / dataloader workers
+    ipc: host          # required by PyTorch DataLoader num_workers > 0
+    environment:
+      # Reproducibility — runtime params, not baked into image
+      PYTHONHASHSEED: "0"
+      CUBLAS_WORKSPACE_CONFIG: ":4096:8"
+      TOKENIZERS_PARALLELISM: "false"
+      # LLM providers (agent wire-up sprint — optional for training-only runs)
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      AES_LLM_ARCHITECT:        ${AES_LLM_ARCHITECT:-}
+      AES_LLM_TRAINING_ENGINEER: ${AES_LLM_TRAINING_ENGINEER:-}
+    env_file:
+      - ../.env            # not committed; see .env.example
+    volumes:
+      - ..:/workspace           # live source sync
+      - hf-cache:/workspace/.cache/huggingface
+      - ../mlruns:/workspace/mlruns
+      - ../runs:/workspace/runs
+    working_dir: /workspace
+
+  mlflow:
+    image: aes-thesis-trainer:latest
+    depends_on: [trainer]
+    command: >
+      mlflow server
+      --host 0.0.0.0
+      --port 5000
+      --backend-store-uri file:/workspace/mlruns
+      --default-artifact-root file:/workspace/mlruns
+    ports:
+      - "5000:5000"
+    volumes:
+      - ../mlruns:/workspace/mlruns
+
+volumes:
+  hf-cache:
