@@ -18,6 +18,11 @@ services:
       args:
         NGC_TAG: 25.12-py3
     image: aes-thesis-trainer:latest
+    # Run as host uid/gid so files written to bind-mounted ../runs and ../mlruns
+    # are owned by the host user (not root). Single-user GX10 box; hard-coded
+    # to 1000:1000. Note: existing hf-cache named volume was populated as root;
+    # read-only access from 1000 works for already-downloaded models.
+    user: "1000:1000"
     # NVIDIA runtime (Docker Engine 19.03+ with nvidia-container-toolkit)
     deploy:
       resources:

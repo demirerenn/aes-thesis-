@@ -26,7 +26,7 @@ training:
   warmup_ratio: 0.1
   weight_decay: 0.01
   precision:   bf16
-  compile_backbone: true
+  compile_backbone: false   # ADR-001-rev2 pilot: disabled due to CUDAGraphs+dynamic-padding incompat on GB10; re-evaluate as Phase-2 ablation
   longformer_global: false
   early_stop_patience: 2
   grad_clip:   1.0
