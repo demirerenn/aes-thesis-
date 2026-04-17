@@ -141,7 +141,10 @@ def stratified_folds(
     stratify_cols: Iterable[str] = ("essay_set", "class_idx"),
 ) -> list[tuple[np.ndarray, np.ndarray]]:
     """Deterministic stratified K-fold (ADR §4.5)."""
-    key = df[list(stratify_cols)].astype(str).agg("-".join, axis=1).values
+    stratify_cols = list(stratify_cols)
+    if "essay_set" in df.columns and df["essay_set"].nunique() > 1 and "class_idx" in stratify_cols:
+        stratify_cols = [c for c in stratify_cols if c != "class_idx"]
+    key = df[stratify_cols].astype(str).agg("-".join, axis=1).values
     skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
     return list(skf.split(np.zeros(len(df)), key))
 
@@ -177,7 +180,15 @@ def fixed_split(
     assert abs(sum(ratios) - 1.0) < 1e-6, f"ratios must sum to 1.0, got {ratios}"
     r_tr, r_dev, r_te = ratios
 
-    key = df[list(stratify_cols)].astype(str).agg("-".join, axis=1).values
+    stratify_cols = list(stratify_cols)
+    # Multi-prompt safeguard: ASAP1 P8 has 61 class levels × ~720 samples →
+    # some (essay_set, class_idx) strata are singletons and crash
+    # train_test_split. When more than one prompt is present, strip
+    # class_idx from the stratification key to keep splits feasible.
+    if "essay_set" in df.columns and df["essay_set"].nunique() > 1 and "class_idx" in stratify_cols:
+        stratify_cols = [c for c in stratify_cols if c != "class_idx"]
+
+    key = df[stratify_cols].astype(str).agg("-".join, axis=1).values
     # First: carve off test
     from sklearn.model_selection import train_test_split
     idx = np.arange(len(df))

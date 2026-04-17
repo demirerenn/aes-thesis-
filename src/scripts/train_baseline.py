@@ -128,9 +128,57 @@ def main() -> int:
 
     output_dir = Path(cfg["output"]["dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
+    out_json = output_dir / f"summary_{run_name}.json"
 
     all_obs: list[float] = []         # one QWK per observation (seed × fold or seed)
     fold_records: list[dict] = []
+
+    # Resume logic: if a partial summary exists from a previous interrupted run,
+    # reload completed fold_records so we skip already-processed (seed, fold) pairs.
+    if out_json.exists():
+        try:
+            prev = json.loads(out_json.read_text())
+            fold_records = list(prev.get("fold_records", []))
+            all_obs = [float(r["qwk"]) for r in fold_records]
+            print(f"[RESUME] loaded {out_json.name} with {len(fold_records)} completed records")
+        except Exception as e:
+            print(f"[RESUME] ignoring unreadable {out_json.name}: {e}")
+
+    def _write_partial_summary(final: bool = False) -> None:
+        obs = np.asarray(all_obs, dtype=float)
+        if obs.size >= 3:
+            mu, lo, hi = bootstrap_ci_fold_level(obs, n_iter=1000)
+        elif obs.size > 0:
+            mu = float(obs.mean()); lo = float(obs.min()); hi = float(obs.max())
+        else:
+            mu = lo = hi = 0.0
+        total_expected = len(cfg["eval"].get("seeds", []) if mode == "pilot"
+                             else cfg["cv"].get("seeds", []) * cfg["cv"].get("n_splits", 1))
+        summary = {
+            "run_name": run_name,
+            "mode": mode,
+            "n_observations": int(obs.size),
+            "qwk_mean": float(mu),
+            "qwk_std":  float(obs.std(ddof=1)) if obs.size > 1 else 0.0,
+            "qwk_min":  float(obs.min()) if obs.size else 0.0,
+            "qwk_max":  float(obs.max()) if obs.size else 0.0,
+            "qwk_ci_lo": float(lo),
+            "qwk_ci_hi": float(hi),
+            "fold_records": fold_records,
+            "env": env.as_mlflow_params(),
+            "data_hashes": hashes,
+            "is_partial": (not final) and obs.size < total_expected,
+        }
+        out_json.write_text(json.dumps(summary, indent=2))
+
+    # Multi-prompt trigger: ASAP1 with more than one essay_set in the data →
+    # per-prompt denormalization + per-prompt QWK avg (ADR rev3.2 §9).
+    prompt_map = None
+    if ds_spec["name"] == "asap1":
+        unique_sets = df["essay_set"].unique()
+        if len(unique_sets) > 1:
+            prompt_map = {int(es): ASAP1_PROMPTS[int(es)] for es in unique_sets}
+            print(f"[multi-prompt] enabled for prompts={sorted(prompt_map)}")
 
     def _run_one(tr_df, va_df, te_df, seed: int, tag: str) -> dict:
         """Train one model and evaluate on dev (val) + optional test."""
@@ -143,7 +191,7 @@ def main() -> int:
             tcfg.grad_accum = 1
             tcfg.compile_backbone = False
 
-        trainer = Trainer(tcfg)
+        trainer = Trainer(tcfg, prompt_map=prompt_map)
         if mlflow:
             with mlflow.start_run(run_name=f"{run_name}-{tag}"):
                 mlflow.log_params(env.as_mlflow_params())
@@ -208,6 +256,9 @@ def main() -> int:
         ckpt_path = output_dir / f"ckpt-{tag}.pt"
         trainer.save_checkpoint(ckpt_path)
         print(f"  → saved {ckpt_path}")
+        # Attach per-epoch learning curve (train/val QWK, gap) so Evaluator
+        # can render diagnostic plots without re-running the model.
+        dev_metrics["history"] = list(getattr(trainer, "history", []))
         return dev_metrics
 
     if mode == "pilot":
@@ -223,12 +274,19 @@ def main() -> int:
         print(f"Fixed split (seed={split_seed}, ratios={ratios}): "
               f"train={len(tr_df)} dev={len(dev_df)} test={len(te_df)}")
 
+        completed_seeds = {r["seed"] for r in fold_records if r.get("fold") is None}
         for seed in seeds:
+            if seed in completed_seeds:
+                print(f"[RESUME] seed {seed} already done; skipping")
+                continue
             set_seed(seed)
             tag = f"pilot-s{seed}"
             metrics = _run_one(tr_df, dev_df, te_df, seed=seed, tag=tag)
             fold_records.append({"seed": seed, "fold": None, **metrics})
             all_obs.append(metrics["qwk"])
+            _write_partial_summary(final=False)
+            print(f"[CHECKPOINT] summary updated after seed={seed} "
+                  f"(n={len(fold_records)}/{len(seeds)})")
 
     else:
         # ---- CV Phase (ADR-001-rev1 §5): 5-fold × N seeds ----
@@ -238,40 +296,44 @@ def main() -> int:
             seeds = seeds[:1]
             n_splits = 2
 
+        completed_pairs = {(r["seed"], r.get("fold")) for r in fold_records}
         for seed in seeds:
             set_seed(seed)
             folds = stratified_folds(df, n_splits=n_splits, seed=seed)
             for fold_i, tr_df, va_df in iter_folds(df, folds):
+                if (seed, fold_i) in completed_pairs:
+                    print(f"[RESUME] seed={seed} fold={fold_i} already done; skipping")
+                    continue
                 tag = f"cv-s{seed}-f{fold_i}"
                 metrics = _run_one(tr_df, va_df, None, seed=seed, tag=tag)
                 fold_records.append({"seed": seed, "fold": fold_i, **metrics})
                 all_obs.append(metrics["qwk"])
+                _write_partial_summary(final=False)
 
-    # ---------------- Aggregate ----------------
+    # ---------------- Final aggregate + auto-Evaluator ----------------
+    _write_partial_summary(final=True)
     obs = np.asarray(all_obs)
-    # Bootstrap CI is meaningful for n ≥ 5. In pilot mode with 3 seeds we
-    # still report it, but also log mean ± std for transparency.
-    if obs.size >= 3:
-        mu, lo, hi = bootstrap_ci_fold_level(obs, n_iter=1000)
-    else:
-        mu, lo, hi = float(obs.mean()), float(obs.min()), float(obs.max())
-    summary = {
-        "run_name": run_name,
-        "mode": mode,
-        "n_observations": int(obs.size),
-        "qwk_mean": float(mu),
-        "qwk_std":  float(obs.std(ddof=1)) if obs.size > 1 else 0.0,
-        "qwk_min":  float(obs.min()),
-        "qwk_max":  float(obs.max()),
-        "qwk_ci_lo": float(lo),
-        "qwk_ci_hi": float(hi),
-        "fold_records": fold_records,
-        "env": env.as_mlflow_params(),
-        "data_hashes": hashes,
-    }
-    out_json = output_dir / f"summary_{run_name}.json"
-    out_json.write_text(json.dumps(summary, indent=2))
-    print(f"\n=== Summary ===\nQWK = {mu:.4f}  [{lo:.4f}, {hi:.4f}]  (n={obs.size})\nWritten: {out_json}")
+    mu = float(obs.mean()) if obs.size else 0.0
+    print(f"\n=== Summary ===\nQWK_mean = {mu:.4f}  (n={obs.size})\nWritten: {out_json}")
+
+    # Auto-invoke Evaluator Agent (ADR-001 rev3 §6). Rendering errors must
+    # not fail the training run — training data is already persisted.
+    try:
+        from src.agents.nodes.evaluator import EvaluatorInput, evaluate_run
+        template_dir = PROJECT_ROOT / "src" / "agents" / "templates"
+        ev_out = evaluate_run(EvaluatorInput(
+            run_dir=output_dir,
+            config_path=Path(args.config),
+            template_dir=template_dir,
+        ))
+        print(f"\n=== Evaluator ===")
+        print(f"  decision : {ev_out['decision']}  ({ev_out.get('next_agent')})")
+        print(f"  QWK      : {ev_out['qwk_mean']:.4f}")
+        print(f"  report   : {ev_out['report_path']}")
+        if ev_out.get("learning_curves_path"):
+            print(f"  curves   : {ev_out['learning_curves_path']}")
+    except Exception as e:
+        print(f"[WARN] auto-Evaluator failed: {type(e).__name__}: {e}")
 
     return 0
 
