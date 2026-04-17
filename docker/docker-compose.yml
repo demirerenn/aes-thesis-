@@ -40,12 +40,27 @@ services:
       PYTHONHASHSEED: "0"
       CUBLAS_WORKSPACE_CONFIG: ":4096:8"
       TOKENIZERS_PARALLELISM: "false"
-      # LLM providers (agent wire-up sprint — optional for training-only runs)
+      # LLM providers — 3 sağlayıcı (Anthropic, OpenAI, Google)
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
-      AES_LLM_ARCHITECT:        ${AES_LLM_ARCHITECT:-}
-      AES_LLM_TRAINING_ENGINEER: ${AES_LLM_TRAINING_ENGINEER:-}
+      # Per-agent LLM override (opsiyonel — varsayılan graph.py LLM_ROUTING)
+      AES_LLM_ORCHESTRATOR:           ${AES_LLM_ORCHESTRATOR:-}
+      AES_LLM_RESEARCH:               ${AES_LLM_RESEARCH:-}
+      AES_LLM_DATA_ANALYST:           ${AES_LLM_DATA_ANALYST:-}
+      AES_LLM_ARCHITECT:              ${AES_LLM_ARCHITECT:-}
+      AES_LLM_TRAINING_ENGINEER:      ${AES_LLM_TRAINING_ENGINEER:-}
+      AES_LLM_EVALUATOR:              ${AES_LLM_EVALUATOR:-}
+      AES_LLM_FEEDBACK_STRATEGY:      ${AES_LLM_FEEDBACK_STRATEGY:-}
+      AES_LLM_CODE_REVIEWER:          ${AES_LLM_CODE_REVIEWER:-}
+      AES_LLM_DEVOPS:                 ${AES_LLM_DEVOPS:-}
+      AES_LLM_THESIS_WRITER:          ${AES_LLM_THESIS_WRITER:-}
+      AES_LLM_FAIRNESS_AUDITOR:       ${AES_LLM_FAIRNESS_AUDITOR:-}
+      AES_LLM_OPS_MONITOR:            ${AES_LLM_OPS_MONITOR:-}
+      AES_LLM_PEER_COORDINATOR:       ${AES_LLM_PEER_COORDINATOR:-}
+      AES_LLM_REVIEW_ML_LOGIC:        ${AES_LLM_REVIEW_ML_LOGIC:-}
+      AES_LLM_REVIEW_PERFORMANCE:     ${AES_LLM_REVIEW_PERFORMANCE:-}
+      AES_LLM_REVIEW_REPRODUCIBILITY: ${AES_LLM_REVIEW_REPRODUCIBILITY:-}
     env_file:
       - ../.env            # not committed; see .env.example
     volumes:

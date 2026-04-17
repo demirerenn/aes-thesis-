@@ -24,31 +24,35 @@ from typing import Callable
 from langgraph.graph import END, START, StateGraph
 
 from .state import AESState
+from .llm_factory import AGENT_CONFIG, get_chat_model, invoke_agent, make_agent_node
 
 
 # -------------------------------------------------------------------
-# LLM routing (stubs — to be replaced with real LangChain ChatModels)
+# LLM routing — model atamaları (AGENT_CONFIG ile senkron tutulur)
 # -------------------------------------------------------------------
 
 LLM_ROUTING: dict[str, str] = {
-    # Core agents (13)
-    "orchestrator":      "claude-opus-4-6",
-    "research":          "claude-opus-4-6",
-    "data_analyst":      "claude-sonnet-4-6",
-    "architect":         "claude-opus-4-6",
-    "training_engineer": "gpt-5.3-codex",
-    "evaluator":         "claude-sonnet-4-6",
-    "feedback_strategy": "claude-opus-4-6",
-    "code_reviewer":     "gpt-5.3-codex",
-    "devops":            "claude-haiku-4-5",
-    "thesis_writer":     "claude-opus-4-6",
+    # Core agents (13) — rev3: Opus 4.7 upgrade (16 Nisan 2026)
+    # Tier-1 Opus 4.7: stratejik muhakeme, mimari karar, kök-neden analizi
+    # Aynı fiyat ($5/$25 per M token), 14 benchmark'ın 12'sinde 4.6'yı geçiyor
+    "orchestrator":      "claude-opus-4-7",
+    "research":          "claude-opus-4-7",
+    "data_analyst":      "claude-opus-4-7",       # ↑ Sonnet→Opus: EDA içgörüleri Architect'i besliyor
+    "architect":         "claude-opus-4-7",
+    "training_engineer": "claude-opus-4-7",       # ↑ GPT-5.3→Opus: loss/HP stratejik kararlar
+    "feedback_strategy": "claude-opus-4-7",
+    "thesis_writer":     "claude-opus-4-7",
+    "review_reproducibility": "claude-opus-4-7",  # ↑ Sonnet→Opus: tez metodolojik rigor
+    # Tier-2 Sonnet: yapılandırılmış analiz, koordinasyon
+    "evaluator":         "claude-sonnet-4-6",     # deterministik — LLM sadece opsiyonel cilalama
     "fairness_auditor":  "claude-sonnet-4-6",
-    "ops_monitor":       "claude-haiku-4-5",
+    "devops":            "claude-sonnet-4-6",     # ↑ Haiku→Sonnet: ARM64+CUDA karmaşıklığı
+    "ops_monitor":       "claude-sonnet-4-6",     # ↑ Haiku→Sonnet: anomali tespiti
     "peer_coordinator":  "claude-sonnet-4-6",
-    # Sub-reviewers (3)
-    "review_ml_logic":        "gemini-3.1-pro",
-    "review_performance":     "gpt-5.4-pro",
-    "review_reproducibility": "claude-sonnet-4-6",
+    # Tier-3 Cross-provider: kognitif çeşitlilik (peer review çapraz doğrulama)
+    "code_reviewer":          "gpt-5.3-codex",    # farklı LLM → Claude kör noktalarını yakalar
+    "review_ml_logic":        "gemini-3.1-pro",   # Gemini perspektifi
+    "review_performance":     "gpt-5.4-pro",      # GPT perspektifi
 }
 
 
@@ -59,18 +63,22 @@ def resolve_llm(agent_name: str) -> str:
 
 
 # -------------------------------------------------------------------
-# Node placeholders
+# Node factory
 #
-# Each real implementation lives in src/agents/nodes/<name>.py and
-# exports a `run(state: AESState) -> AESState` callable. Until those
-# are implemented, these stubs simply log the transition and pass
-# state through unchanged. This keeps `python -m src.agents.graph`
-# executable for DAG verification before the LLM calls are wired.
+# Evaluator has a dedicated implementation (src/agents/nodes/evaluator.py)
+# because it is deterministic (no LLM call). All other agents use
+# make_agent_node() from llm_factory.py which:
+#   1. Reads AGENT_CONFIG for system prompt + model
+#   2. Builds context from AESState (decisions, QWK, run name)
+#   3. Invokes the correct provider (Anthropic/OpenAI/Google)
+#   4. Writes result back to state
+#   5. Falls back to stub mode if API key is missing
 # -------------------------------------------------------------------
 
 def _stub(agent_name: str) -> Callable[[AESState], AESState]:
+    """Fallback stub — only used for --dry-run DAG verification."""
     def node(state: AESState) -> AESState:
-        print(f"[{agent_name:>22}] {resolve_llm(agent_name):>20}  —  entering node")
+        print(f"[{agent_name:>22}] {resolve_llm(agent_name):>20}  —  stub (dry-run)")
         state.setdefault("scratch", {}).setdefault("visits", {}).setdefault(agent_name, 0)
         state["scratch"]["visits"][agent_name] += 1
         return state
@@ -101,18 +109,25 @@ def route_after_review(state: AESState) -> str:
 # Build graph
 # -------------------------------------------------------------------
 
-def build_graph() -> StateGraph:
+def build_graph(dry_run: bool = False) -> StateGraph:
     g = StateGraph(AESState)
 
-    # Register nodes (core + sub-reviewers)
-    for name in [
+    # Register nodes — gerçek LLM agent'ları veya dry-run stub'ları
+    all_agents = [
         "orchestrator", "research", "data_analyst", "architect",
         "review_ml_logic", "review_performance", "review_reproducibility",
         "training_engineer", "evaluator", "feedback_strategy",
         "code_reviewer", "devops", "fairness_auditor",
         "ops_monitor", "peer_coordinator", "thesis_writer",
-    ]:
-        g.add_node(name, _stub(name))
+    ]
+    for name in all_agents:
+        if dry_run:
+            g.add_node(name, _stub(name))
+        elif name == "evaluator":
+            # Evaluator deterministik — kendi implementasyonu var
+            g.add_node(name, _stub(name))  # TODO: wire evaluator.py
+        else:
+            g.add_node(name, make_agent_node(name))
 
     # Static edges — linear backbone
     g.add_edge(START, "orchestrator")
@@ -157,7 +172,7 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true", help="Validate graph without invoking nodes")
     args = ap.parse_args()
 
-    g = build_graph()
+    g = build_graph(dry_run=args.dry_run)
     app = g.compile()
 
     if args.dry_run:
