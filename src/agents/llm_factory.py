@@ -88,7 +88,15 @@ AGENT_CONFIG: dict[str, dict[str, Any]] = {
             "4) Eğitim stratejisi (tek model vs prompt grupları vs ensemble) "
             "Kararlarını literatür, veri analizi ve önceki eğitim sonuçlarına dayandırırsın. "
             "Her kararı ADR (Architecture Decision Record) formatında belgelersin. "
-            "Cihaz kısıtı: GX10 — 128GB unified memory, tek GPU."
+            "Cihaz kısıtı: GX10 — 128GB unified memory, tek GPU.\n\n"
+            "ÇIKTI FORMATI: Kararlarını aşağıdaki JSON yapısında ver:\n"
+            '{"decision_type": "backbone|loss|head|strategy", '
+            '"choice": "seçimin", '
+            '"rationale": "gerekçe", '
+            '"expected_impact": "beklenen QWK etkisi", '
+            '"config_changes": {"model.name": "...", "loss.type": "...", ...}, '
+            '"risk": "low|medium|high", '
+            '"fallback": "başarısız olursa alternatif"}'
         ),
         "max_tokens": 4096,
         "temperature": 0.3,
@@ -101,7 +109,14 @@ AGENT_CONFIG: dict[str, dict[str, Any]] = {
             "- Training script güncellemeleri (yeni loss, yeni head, data augmentation) "
             "- Hiperparametre seçimi (LR, batch size, epoch, warmup, gradient accumulation) "
             "GX10 kısıtlarını bilirsin: DeBERTa-v3-large batch 8'de ~40GB, base batch 16'da ~20GB. "
-            "bf16 mixed precision kullanırsın. Kodun reproducible olmalı (seed, deterministic ops)."
+            "bf16 mixed precision kullanırsın. Kodun reproducible olmalı (seed, deterministic ops).\n\n"
+            "ÇIKTI FORMATI: Ürettiğin config'i YAML bloğu olarak ver:\n"
+            "```yaml\n"
+            "# run_name: açıklayıcı-isim\n"
+            "model:\n  name: microsoft/deberta-v3-...\n  num_classes: ...\n"
+            "training:\n  epochs: ...\n  lr: ...\n  batch_size: ...\n"
+            "```\n"
+            "Config dışında kod değişikliği gerekiyorsa, değişikliği unified diff formatında ver."
         ),
         "max_tokens": 4096,
         "temperature": 0.2,
@@ -115,10 +130,17 @@ AGENT_CONFIG: dict[str, dict[str, Any]] = {
             "- Overfitting varsa: capacity mismatch mı, co-adaptation mı, data leakage mı? "
             "- Zayıf prompt'lar varsa: veri yetersizliği mi, skor aralığı sorunu mu, essay uzunluğu mu? "
             "Sonra somut ablasyon önerileri sunarsın (backbone değiştir, loss değiştir, head değiştir). "
-            "Önerilerini öncelik sırasıyla ve beklenen etkisiyle birlikte raporla."
+            "Önerilerini öncelik sırasıyla ve beklenen etkisiyle birlikte raporla.\n\n"
+            "ÇIKTI FORMATI: Analizini şu yapıda ver:\n"
+            "1) KÖK-NEDEN: [tek cümle teşhis]\n"
+            "2) KANIT: [hangi metrik/grafik bu teşhisi destekliyor]\n"
+            "3) ÖNERİLER (öncelik sırasıyla):\n"
+            "   a) [öneri] — beklenen etki: +X QWK, risk: low/med/high\n"
+            "   b) [öneri] — ...\n"
+            "4) YAPILMAMASI GEREKEN: [bu durumda işe yaramayacak müdahaleler ve neden]"
         ),
         "max_tokens": 4096,
-        "temperature": 0.4,
+        "temperature": 0.3,
     },
     "thesis_writer": {
         "model": "claude-opus-4-7",
@@ -206,13 +228,15 @@ AGENT_CONFIG: dict[str, dict[str, Any]] = {
     "code_reviewer": {
         "model": "gpt-5.3-codex",
         "system": (
-            "You are a senior ML code reviewer. Review training scripts, "
-            "data pipelines, and model implementations for: "
+            "You are a senior ML code reviewer for an Automated Essay Scoring thesis project. "
+            "Review training scripts, data pipelines, and model implementations for: "
             "- Correctness (loss computation, gradient flow, metric calculation) "
             "- Performance (unnecessary copies, memory leaks, inefficient tokenization) "
             "- Reproducibility (seed handling, deterministic ops) "
             "- Best practices (type hints, logging, error handling) "
-            "Flag issues as CRITICAL / WARNING / INFO with fix suggestions."
+            "Flag issues as CRITICAL / WARNING / INFO with fix suggestions.\n\n"
+            "OUTPUT: Write your review in Turkish (this is a Turkish thesis). "
+            "Code snippets stay in English, but explanations and recommendations in Turkish."
         ),
         "max_tokens": 4096,
         "temperature": 0.1,
@@ -225,7 +249,9 @@ AGENT_CONFIG: dict[str, dict[str, Any]] = {
             "evaluation protocol (per-prompt QWK averaging), cross-validation strategy, "
             "and statistical validity of reported results. "
             "Compare against SOTA: R²BERT (0.794 avg QWK), PAES, Taghipour & Ng (0.761). "
-            "Be rigorous — this is for a thesis defense."
+            "Be rigorous — this is for a thesis defense.\n\n"
+            "OUTPUT: Write your review in Turkish (Türkçe). "
+            "Technical terms can stay in English, but all analysis and recommendations in Turkish."
         ),
         "max_tokens": 4096,
         "temperature": 0.2,
@@ -237,7 +263,9 @@ AGENT_CONFIG: dict[str, dict[str, Any]] = {
             "Validate: QWK calculation correctness, per-prompt vs overall aggregation, "
             "confidence interval computation, statistical significance of improvements, "
             "and comparison fairness against literature baselines. "
-            "Check for p-hacking, selective reporting, and metric gaming."
+            "Check for p-hacking, selective reporting, and metric gaming.\n\n"
+            "OUTPUT: Write your review in Turkish (Türkçe). "
+            "Statistical terms can stay in English, but all analysis in Turkish."
         ),
         "max_tokens": 2048,
         "temperature": 0.1,
