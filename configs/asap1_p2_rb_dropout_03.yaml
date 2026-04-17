@@ -1,0 +1,55 @@
+# ROLLBACK root-cause ablation — dropout 0.3 (vs pilot 0.1).
+#
+# Hipotez: 0.2 yetmezse 0.3 daha agresif regularization sağlar.
+# 0.1 ve 0.2 arasındaki trend'e göre doğrusal mı sublineer mi
+# davrandığını anlarız.
+#
+# Pilot rev0 ile tek fark: dropout 0.1 → 0.3.
+#
+# Run: asap1-p2-deberta_v3_lg-corn-rb_dropout_03-rev0
+
+run_name:  asap1-p2-deberta_v3_lg-corn-rb_dropout_03-rev0
+
+dataset:
+  name:       asap1
+  path:       data/training_set_rel3.tsv
+  prompts:    [2]
+
+model:
+  backbone:   microsoft/deberta-v3-large
+  loss:       corn
+  num_classes: 6
+  dropout:    0.3                # ablation variable — pilot'ta 0.1
+
+training:
+  max_length:  768
+  batch_size:  16
+  grad_accum:  2
+  lr:          1.0e-5
+  epochs:      4
+  warmup_ratio: 0.1
+  weight_decay: 0.01
+  precision:   bf16
+  compile_backbone: false
+  longformer_global: false
+  early_stop_patience: 2
+  grad_clip:   1.0
+  num_workers: 4
+
+eval:
+  mode:        pilot
+  split_seed:  42
+  split_ratios: [0.70, 0.15, 0.15]
+  seeds:       [42, 123, 2024]
+
+cv:
+  n_splits:  5
+  seeds:     [42, 123, 2024]
+
+tracking:
+  mlflow_uri:     file:./mlruns
+  experiment:     aes-thesis
+  log_artifacts:  true
+
+output:
+  dir:        runs/asap1-p2-deberta_v3_lg-corn-rb_dropout_03-rev0

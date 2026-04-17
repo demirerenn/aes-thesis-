@@ -1,0 +1,65 @@
+# Full ASAP1 8-prompt Rejim-B confirmatory — MSE+rank regression (ADR-001 rev3.2).
+#
+# Smoke test (asap1-allprompts-...-smoke) yeşil: 2 epoch × 1 seed → dev avg QWK 0.740,
+# test 0.737, P1 QWK 0.835 (R²BERT P1=0.817 üstünde). Multi-prompt pipeline doğrulandı.
+#
+# Bu run ilk "literatür-uyumlu" confirmatory'dir (Rejim-B eşikleri bağlayıcı):
+#   - GO      ≥ 0.82
+#   - ITERATE 0.78-0.82
+#   - REVISE  0.72-0.78
+#   - ROLLBACK < 0.72
+#
+# Beklenti: ~0.76-0.80 avg (R²BERT 0.794 hedef). 0.78+ gelirse ITERATE-B (dropout/
+# label smoothing/CORAL ablation); 0.82+ gelirse Phase 3 5-fold CV'ye geç.
+#
+# Tahmini wall-clock: 3 seed × 8 epoch × ~45 dk + setup/eval ≈ **~18 saat**.
+# Resume-on-crash: `train_baseline.py` her seed sonrası partial summary yazar;
+# kesintiden sonra tekrar başlatılırsa tamamlanan seed'leri atlar.
+#
+# Run: asap1-allprompts-deberta_v3_lg-mse_rank-rejimB_confirm-rev0
+
+run_name:  asap1-allprompts-deberta_v3_lg-mse_rank-rejimB_confirm-rev0
+
+dataset:
+  name:       asap1
+  path:       data/training_set_rel3.tsv
+  prompts:                    # null → all 8 prompts
+
+model:
+  backbone:   microsoft/deberta-v3-large
+  loss:       mse_rank
+  num_classes: 1
+  dropout:    0.1
+
+training:
+  max_length:  768
+  batch_size:  16
+  grad_accum:  2
+  lr:          1.0e-5
+  epochs:      8
+  warmup_ratio: 0.1
+  weight_decay: 0.01
+  precision:   bf16
+  compile_backbone: false
+  longformer_global: false
+  early_stop_patience: 2
+  grad_clip:   1.0
+  num_workers: 4
+
+eval:
+  mode:        pilot
+  split_seed:  42
+  split_ratios: [0.70, 0.15, 0.15]
+  seeds:       [42, 123, 2024]
+
+cv:
+  n_splits:  5
+  seeds:     [42, 123, 2024]
+
+tracking:
+  mlflow_uri:     file:./mlruns
+  experiment:     aes-thesis
+  log_artifacts:  true
+
+output:
+  dir:        runs/asap1-allprompts-deberta_v3_lg-mse_rank-rejimB_confirm-rev0

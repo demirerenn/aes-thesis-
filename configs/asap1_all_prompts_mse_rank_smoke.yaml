@@ -1,0 +1,58 @@
+# Smoke test for multi-prompt pipeline (ADR rev3.2 §9).
+# 1 seed × 2 epoch, full 8-prompt data, full batch.
+#
+# Yeşil ışık kriterleri:
+#   1. Crash yok (stratify fix işe yaramış).
+#   2. summary_*.json → fold_records[0].per_prompt_qwk dict'inde 8 key var.
+#   3. qwk değerleri NaN değil, makul range'de (0.4-0.8 tipik 2-epoch için).
+#   4. preds CSV'de 8 prompt için y_true/y_pred raw integer olarak görünüyor.
+#   5. Learning curves PNG üretiliyor.
+#
+# Tahmini wall-clock: 9082 örnek / 16 batch × 2 grad_accum = ~283 step/epoch.
+# 1 epoch ~15-18 dk, 2 epoch + train-eval + setup → ~45-50 dk.
+
+run_name:  asap1-allprompts-deberta_v3_lg-mse_rank-smoke
+
+dataset:
+  name:       asap1
+  path:       data/training_set_rel3.tsv
+  prompts:
+
+model:
+  backbone:   microsoft/deberta-v3-large
+  loss:       mse_rank
+  num_classes: 1
+  dropout:    0.1
+
+training:
+  max_length:  768
+  batch_size:  16
+  grad_accum:  2
+  lr:          1.0e-5
+  epochs:      2
+  warmup_ratio: 0.1
+  weight_decay: 0.01
+  precision:   bf16
+  compile_backbone: false
+  longformer_global: false
+  early_stop_patience: 2
+  grad_clip:   1.0
+  num_workers: 4
+
+eval:
+  mode:        pilot
+  split_seed:  42
+  split_ratios: [0.70, 0.15, 0.15]
+  seeds:       [42]              # tek seed, smoke
+
+cv:
+  n_splits:  5
+  seeds:     [42]
+
+tracking:
+  mlflow_uri:     file:./mlruns
+  experiment:     aes-thesis
+  log_artifacts:  true
+
+output:
+  dir:        runs/asap1-allprompts-deberta_v3_lg-mse_rank-smoke

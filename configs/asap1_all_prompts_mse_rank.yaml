@@ -1,0 +1,64 @@
+# Full ASAP1 8-prompt training — MSE+rank regression (ADR-001 rev3.2 §9).
+#
+# Literatür-uyumlu protokol: tüm 8 prompt birlikte eğitilir, değerlendirme
+# her prompt için ayrı QWK → ortalama alınır (Taghipour & Ng 2016, R²BERT
+# 2020 konvansiyonu). Tek head (Linear → sigmoid → [0,1]), per-prompt
+# min-max denormalization evaluate() içinde `prompt_map` ile yapılır
+# (src/aes/training.py).
+#
+# Ablation premise: rev3.1 ROLLBACK zinciri (rb_lr_5e6 / rb_lr_2e5 /
+# rb_dropout_02/03) rev3.2'de iptal edildi — literatür karşılaştırması
+# yanlış temelliymiş (P2-only 0.697 vs 8-prompt avg 0.794). Bu run
+# literatürle apples-to-apples karşılaştırma için bağlayıcıdır.
+#
+# Run: asap1-allprompts-deberta_v3_lg-mse_rank-rev0
+
+run_name:  asap1-allprompts-deberta_v3_lg-mse_rank-rev0
+
+dataset:
+  name:       asap1
+  path:       data/training_set_rel3.tsv
+  # prompts: null → tüm 8 prompt yüklenir (load_asap1 default davranışı).
+  prompts:
+
+model:
+  backbone:   microsoft/deberta-v3-large
+  loss:       mse_rank
+  num_classes: 1               # regression head (Linear→sigmoid [0,1])
+  dropout:    0.1
+
+training:
+  max_length:  768
+  batch_size:  16
+  grad_accum:  2                # effective batch = 32
+  lr:          1.0e-5
+  epochs:      8                # tüm dataset (12978) → pilot'tan ~10x veri; 8 epoch konservatif başlangıç
+  warmup_ratio: 0.1
+  weight_decay: 0.01
+  precision:   bf16
+  compile_backbone: false
+  longformer_global: false
+  early_stop_patience: 2
+  grad_clip:   1.0
+  num_workers: 4
+
+# Rejim-A (tek prompt) değil Rejim-B (8-prompt avg) — ADR rev3.2 §4.0.
+# Gate eşikleri Evaluator tarafından otomatik seçilir (prompts listesinin
+# uzunluğuna göre).
+eval:
+  mode:        pilot
+  split_seed:  42
+  split_ratios: [0.70, 0.15, 0.15]
+  seeds:       [42, 123, 2024]
+
+cv:
+  n_splits:  5
+  seeds:     [42, 123, 2024]
+
+tracking:
+  mlflow_uri:     file:./mlruns
+  experiment:     aes-thesis
+  log_artifacts:  true
+
+output:
+  dir:        runs/asap1-allprompts-deberta_v3_lg-mse_rank-rev0

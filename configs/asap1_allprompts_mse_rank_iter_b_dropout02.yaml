@@ -1,0 +1,60 @@
+# ITERATE-B ablation — dropout 0.2 + epoch 12 (ADR rev3.2 R2 sinyali).
+#
+# Motivasyon: rejimB_confirm-rev0 sonucu avg QWK 0.7576 (REVISE bandı).
+# Learning curves: train 0.97'ye satüre, val 0.76 plato, gap 0.20-0.22.
+# Hipotez: dropout artırımı (0.1→0.2) train satürasyonunu yavaşlatır,
+# daha uzun bütçe (12 epoch, patience 3) val eğrisine daha çok alan sağlar.
+#
+# Kontrol: rejimB_confirm-rev0 ile tek fark dropout 0.1→0.2, epoch 8→12,
+# patience 2→3. Aynı split_seed=42, aynı data, aynı backbone.
+#
+# İlk run 1 seed (42) ile; trend doğruysa (gap <0.15, val >0.76) kalan
+# 2 seed eklenir.
+#
+# Run: asap1-allprompts-deberta_v3_lg-mse_rank-iter_b_dropout02-rev0
+
+run_name:  asap1-allprompts-deberta_v3_lg-mse_rank-iter_b_dropout02-rev0
+
+dataset:
+  name:       asap1
+  path:       data/training_set_rel3.tsv
+  prompts:
+
+model:
+  backbone:   microsoft/deberta-v3-large
+  loss:       mse_rank
+  num_classes: 1
+  dropout:    0.2              # ablation variable — confirm'de 0.1
+
+training:
+  max_length:  768
+  batch_size:  16
+  grad_accum:  2
+  lr:          1.0e-5
+  epochs:      12              # was 8 — more headroom for regularized model
+  warmup_ratio: 0.1
+  weight_decay: 0.01
+  precision:   bf16
+  compile_backbone: false
+  longformer_global: false
+  early_stop_patience: 3      # was 2 — tolerate longer plateaus
+  grad_clip:   1.0
+  num_workers: 4
+
+eval:
+  mode:        pilot
+  split_seed:  42
+  split_ratios: [0.70, 0.15, 0.15]
+  seeds:       [42]            # 1 seed scout — extend to [42, 123, 2024] if promising
+
+cv:
+  n_splits:  5
+  seeds:     [42, 123, 2024]
+
+tracking:
+  mlflow_uri:     file:./mlruns
+  experiment:     aes-thesis
+  log_artifacts:  true
+
+output:
+  dir:        runs/asap1-allprompts-deberta_v3_lg-mse_rank-iter_b_dropout02-rev0
