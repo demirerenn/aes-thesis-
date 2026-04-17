@@ -49,3 +49,4 @@ data/interim/
 
 # Large dataset — transferred manually via flash drive
 data/ASAP2_train_sourcetexts.csv
+*.new

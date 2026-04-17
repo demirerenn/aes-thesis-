@@ -36,6 +36,37 @@ load_dotenv()
 
 
 # =====================================================================
+# Model alias layer — hayalî/henüz-yayında-olmayan ID'leri gerçek
+# (kanonik) model ID'lerine yönlendirir. Tez raporlarında "Opus 4.7"
+# gibi sembolik tier isimleri korunur, ama API çağrısı kanonik ID ile
+# yapılır. Tamamen opt-out yapılabilir (AES_DISABLE_MODEL_ALIAS=1) ya da
+# her model için ayrı env override verilebilir
+# (AES_MODEL_ALIAS_CLAUDE_OPUS_4_7=claude-opus-4-5-20250101 gibi).
+# =====================================================================
+
+_MODEL_ALIAS: dict[str, str] = {
+    # Anthropic — "Opus 4.7" henüz kanonik bir API ID değil; 4.6'ya düşür.
+    "claude-opus-4-7":  "claude-opus-4-6",
+    # OpenAI — sembolik "5.3/5.4" tier'larını en güncel stabil ID'ye düşür.
+    "gpt-5.3-codex":    "gpt-4o-2024-11-20",
+    "gpt-5.4-pro":      "gpt-4o-2024-11-20",
+    # Google — sembolik "3.1 Pro"yu en güncel 2.x Pro'ya düşür.
+    "gemini-3.1-pro":   "gemini-2.0-pro-exp",
+}
+
+
+def _resolve_model_alias(model_id: str) -> str:
+    """Kanonik API ID'sine düşür. Env override öncelikli."""
+    if os.getenv("AES_DISABLE_MODEL_ALIAS", "").lower() in {"1", "true", "yes"}:
+        return model_id
+    per_model_env = f"AES_MODEL_ALIAS_{model_id.upper().replace('-', '_').replace('.', '_')}"
+    override = os.getenv(per_model_env)
+    if override:
+        return override
+    return _MODEL_ALIAS.get(model_id, model_id)
+
+
+# =====================================================================
 # Agent Config — her agent'ın modeli, system prompt'u ve parametreleri
 # =====================================================================
 # Senin gösterdiğin AGENT_CONFIG yapısına benzer, ama daha detaylı.
@@ -299,9 +330,17 @@ def get_chat_model(model_id: str, temperature: float = 0.3) -> BaseChatModel:
     Senin gösterdiğin yapıdaki şuna karşılık gelir:
         client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
-    Ama burada 3 sağlayıcı otomatik yönetiliyor.
+    Ama burada 3 sağlayıcı otomatik yönetiliyor. Ek olarak AGENT_CONFIG'deki
+    sembolik/henüz-yayında-olmayan ID'ler (ör. ``claude-opus-4-7``) burada
+    ``_resolve_model_alias`` ile kanonik API ID'sine düşürülür. Dış dünyadan
+    gelen model ID tier logging için korunurken gerçek API çağrısı kanonik
+    ID ile yapılır.
     """
-    provider = _detect_provider(model_id)
+    resolved = _resolve_model_alias(model_id)
+    if resolved != model_id:
+        print(f"[llm_factory] alias: {model_id} → {resolved}")
+    provider = _detect_provider(resolved)
+    model_id = resolved
 
     if provider == "anthropic":
         from langchain_anthropic import ChatAnthropic
@@ -397,19 +436,51 @@ def invoke_agent(agent_name: str, user_message: str, **kwargs) -> str:
 # LangGraph node factory — graph.py'deki _stub() yerine kullanılacak
 # =====================================================================
 
+# Reviewer agent'ları — bunların her başarılı çağrısı implicit bir "approve"
+# Decision'ı olarak kaydedilir; route_after_review benzersiz reviewer ID
+# seti üzerinden gate'ler. Bu mapping tek bir yerde tutulmalı (graph.py
+# _REQUIRED_REVIEWERS ile senkron).
+_REVIEWER_AGENTS: frozenset[str] = frozenset({
+    "review_ml_logic", "review_performance", "review_reproducibility",
+})
+
+
+def _heuristic_review_decision(text: str) -> str:
+    """Reviewer çıktısından kaba bir approve/revise sinyali çıkar.
+
+    Gerçek sistemde reviewer agent'ları yapılandırılmış JSON döndürmeli;
+    o yapılana kadar metin içinden ipucu ararız. Token-level, dil-agnostik.
+    """
+    t = (text or "").lower()
+    # Güçlü red sinyalleri önceliklidir.
+    for kw in ("reject", "revise", "red", "kritik sorun", "critical"):
+        if kw in t:
+            return "revise"
+    for kw in ("approve", "onay", "lgtm", "kabul", "accept"):
+        if kw in t:
+            return "approve"
+    # Net sinyal yoksa approve saymak agent'ı sessizce atlatır; varsayılan
+    # olarak "revise" daha güvenli — revizyon bir ek turdan başka şey değil.
+    return "revise"
+
+
 def make_agent_node(agent_name: str):
     """LangGraph node fonksiyonu üret — graph.py'deki _stub()'ın gerçek hali.
 
-    Bu fonksiyon AESState alır, agent'ı çağırır, sonucu state'e yazar.
+    Döndürdüğü fonksiyon AESState kabul eder ve **kısmi state update**
+    döndürür (TypedDict içinde sadece değişen alanlar). LangGraph bu
+    update'i state'in reducer'larıyla (messages=add_messages, decisions/
+    artifacts=operator.add, scratch=_merge_scratch) birleştirir — bu
+    sayede paralel fan-out dallarında reviewer decision'ları kaybolmaz.
     """
     from .state import AESState
 
-    def node(state: AESState) -> AESState:
+    def node(state: AESState) -> dict[str, Any]:
         cfg = AGENT_CONFIG.get(agent_name, {})
         model_id = os.getenv(f"AES_LLM_{agent_name.upper()}") or cfg.get("model", "unknown")
 
         # State'ten ilgili context'i hazırla
-        context_parts = []
+        context_parts: list[str] = []
         if state.get("decisions"):
             last_decisions = state["decisions"][-3:]  # son 3 karar
             for d in last_decisions:
@@ -425,28 +496,51 @@ def make_agent_node(agent_name: str):
 
         print(f"[{agent_name:>22}] {model_id:>20}  —  invoking LLM")
 
+        update: dict[str, Any] = {
+            "scratch": {"visits": {agent_name: 1}},
+        }
+
         try:
             result = invoke_agent(agent_name, context)
 
-            # Sonucu state'e ekle
+            # Sohbet log'u ve serbest-form scratch
             from langchain_core.messages import AIMessage
-            state.setdefault("messages", []).append(
-                AIMessage(content=f"[{agent_name}] {result[:500]}")  # truncate for state size
-            )
+            update["messages"] = [AIMessage(content=f"[{agent_name}] {result[:500]}")]
+            update["scratch"][f"{agent_name}_last_output"] = result
 
-            # Visit tracking
-            state.setdefault("scratch", {}).setdefault("visits", {}).setdefault(agent_name, 0)
-            state["scratch"]["visits"][agent_name] += 1
-            state["scratch"][f"{agent_name}_last_output"] = result
+            # Reviewer agent'ları için implicit Decision — route_after_review
+            # bu set üzerinden idempotent gate'ler.
+            if agent_name in _REVIEWER_AGENTS:
+                verdict = _heuristic_review_decision(result)
+                update["decisions"] = [{
+                    "agent": agent_name,
+                    "decision": verdict,
+                    "rationale": f"{agent_name} review: {result[:200]}",
+                    "target_run": "architect" if verdict == "revise" else "training_engineer",
+                }]
 
             print(f"[{agent_name:>22}] ✓ completed ({len(result)} chars)")
 
         except EnvironmentError as e:
-            # API key eksik — stub moduna düş
+            # API key eksik — stub moduna düş. ÖNEMLİ: route'ların kararsız
+            # kalmaması için Decision mutlaka kaydedilir. Reviewer'lar için
+            # "revise" yazılır ki eksik credential ile yanlışlıkla GO alınmasın.
             print(f"[{agent_name:>22}] ⚠ API key eksik, stub modunda: {e}")
-            state.setdefault("scratch", {}).setdefault("visits", {}).setdefault(agent_name, 0)
-            state["scratch"]["visits"][agent_name] += 1
+            if agent_name in _REVIEWER_AGENTS:
+                update["decisions"] = [{
+                    "agent": agent_name,
+                    "decision": "revise",
+                    "rationale": f"stub (missing API key): {e!s}",
+                    "target_run": "architect",
+                }]
+            else:
+                update["decisions"] = [{
+                    "agent": agent_name,
+                    "decision": "rollback",
+                    "rationale": f"stub (missing API key): {e!s}",
+                    "target_run": "architect",
+                }]
 
-        return state
+        return update
 
     return node
